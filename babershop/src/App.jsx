@@ -12,7 +12,7 @@ const AppShell = styled.main`
     display: block;
   }
 `
-const ApiNotice = styled.div`
+const ApiNotice = styled.div` // Estilo para a notificação de API
   margin: 16px 0;
   padding: 12px 14px;
   border: 1px solid #e6d4c5;
