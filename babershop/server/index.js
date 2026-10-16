@@ -6,7 +6,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const app = express()
-const port = Number(process.env.PORT) || 3001
+const port = Number(process.env.API_PORT || process.env.PORT) || 3001
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const dataDirectory = process.env.BARBERSHOP_DATA_DIR || path.join(os.homedir(), '.navalha-barbearia')
 const dataFile = path.join(dataDirectory, 'appointments.json')

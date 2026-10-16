@@ -11,7 +11,7 @@ npm install
 npm run dev
 ```
 
-O comando de desenvolvimento inicia o Vite e a API Express. A API fica disponível em `http://localhost:3001`, e o Vite encaminha as chamadas `/api` para ela.
+O comando de desenvolvimento inicia o Vite e a API Express. A API fica disponível em `http://127.0.0.1:3001`, e o Vite encaminha as chamadas `/api` para ela. Se a porta padrão estiver ocupada, defina `API_PORT` antes de iniciar o app; tanto o Express quanto o proxy do Vite usarão essa porta.
 
 Em produção, gere os arquivos do frontend e inicie o servidor:
 
@@ -20,7 +20,7 @@ npm run build
 npm start
 ```
 
-O servidor Express atende a API e os arquivos compilados do frontend. A porta pode ser configurada pela variável de ambiente `PORT`.
+O servidor Express atende a API e os arquivos compilados do frontend. A porta pode ser configurada pela variável de ambiente `API_PORT` (ou `PORT`, se `API_PORT` não estiver definida).
 
 Para validar o projeto:
 

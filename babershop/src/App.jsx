@@ -77,6 +77,9 @@ async function apiRequest(path, options) {
     headers: { 'Content-Type': 'application/json', ...options?.headers },
   })
   if (!response.headers.get('content-type')?.includes('application/json')) {
+    if (response.status === 502) {
+      throw new Error('A API Express não respondeu. Inicie o aplicativo com "npm run dev" e confira se a porta da API está disponível.')
+    }
     throw new Error(`Resposta inválida do servidor (HTTP ${response.status}).`)
   }
   const result = await response.json()
