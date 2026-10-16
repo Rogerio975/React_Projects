@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import styled, { createGlobalStyle } from 'styled-components'
-import appStyles from './App.css?inline'
+import appStyles from './App.css?inline' // Vite CSS plugin allows importing CSS as a string with ?inline
 
 const GlobalStyles = createGlobalStyle`${appStyles}`
 const AppShell = styled.main`
