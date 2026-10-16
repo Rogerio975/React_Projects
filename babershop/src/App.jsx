@@ -1,5 +1,26 @@
 import { useEffect, useMemo, useState } from 'react'
-import './App.css'
+import styled, { createGlobalStyle } from 'styled-components'
+import appStyles from './App.css?inline'
+
+const GlobalStyles = createGlobalStyle`${appStyles}`
+const AppShell = styled.main`
+  min-height: 100vh;
+  display: flex;
+  background: #f6f5f1;
+
+  @media (max-width: 640px) {
+    display: block;
+  }
+`
+const ApiNotice = styled.div`
+  margin: 16px 0;
+  padding: 12px 14px;
+  border: 1px solid #e6d4c5;
+  border-radius: 7px;
+  color: #844c3c;
+  background: #fcf3ed;
+  font-size: 12px;
+`
 
 const services = [
   { name: 'Corte de cabelo', duration: 45, price: 45 },
@@ -9,7 +30,7 @@ const services = [
 ]
 
 const timeSlots = ['09:00', '09:30', '10:00', '10:30', '11:00', '11:30', '12:00', '13:00', '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30', '17:00', '17:30', '18:00']
-const storageKey = 'barbearia-agendamentos'
+const legacyStorageKey = 'barbearia-agendamentos'
 const today = new Date()
 const todayString = formatDate(today)
 const closingTime = 19 * 60
@@ -50,12 +71,51 @@ function availableTimeSlots(serviceName) {
   return timeSlots.filter((time) => minutesFromTime(time) + (service?.duration ?? 0) <= closingTime)
 }
 
-function loadAppointments() {
+async function apiRequest(path, options) {
+  const response = await fetch(path, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+  })
+  if (!response.headers.get('content-type')?.includes('application/json')) {
+    throw new Error(`Resposta inválida do servidor (HTTP ${response.status}).`)
+  }
+  const result = await response.json()
+  if (!response.ok) throw new Error(result.error || 'Não foi possível concluir a operação.')
+  return result
+}
+
+async function loadAppointments() {
+  const appointments = await apiRequest('/api/appointments')
+  const legacyData = localStorage.getItem(legacyStorageKey)
+  if (!legacyData) return { appointments, warning: '' }
+
+  let legacyAppointments
   try {
-    const saved = JSON.parse(localStorage.getItem(storageKey) || '[]')
-    return Array.isArray(saved) ? saved : []
+    legacyAppointments = JSON.parse(legacyData)
   } catch {
-    return []
+    return { appointments, warning: 'Os agendamentos antigos não puderam ser lidos e foram mantidos no navegador.' }
+  }
+
+  if (!Array.isArray(legacyAppointments)) {
+    return { appointments, warning: 'Os agendamentos antigos têm um formato inválido e foram mantidos no navegador.' }
+  }
+  if (legacyAppointments.length === 0) {
+    localStorage.removeItem(legacyStorageKey)
+    return { appointments, warning: '' }
+  }
+
+  try {
+    const importedAppointments = await apiRequest('/api/appointments/import', {
+      method: 'POST',
+      body: JSON.stringify(legacyAppointments),
+    })
+    localStorage.removeItem(legacyStorageKey)
+    return { appointments: importedAppointments, warning: '' }
+  } catch (migrationError) {
+    return {
+      appointments,
+      warning: `A migração dos agendamentos antigos não foi concluída; os dados foram mantidos no navegador. ${migrationError.message}`,
+    }
   }
 }
 
@@ -81,7 +141,9 @@ function Icon({ name, size = 20 }) {
 }
 
 function App() {
-  const [appointments, setAppointments] = useState(loadAppointments)
+  const [appointments, setAppointments] = useState([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [apiError, setApiError] = useState('')
   const [selectedDate, setSelectedDate] = useState(todayString)
   const [weekStart, setWeekStart] = useState(() => getMonday(today))
   const [showCancelled, setShowCancelled] = useState(false)
@@ -90,9 +152,37 @@ function App() {
   const [form, setForm] = useState(emptyForm(todayString))
   const [error, setError] = useState('')
 
+  async function refreshAppointments() {
+    setIsLoading(true)
+    setApiError('')
+    try {
+      const result = await loadAppointments()
+      setAppointments(result.appointments)
+      setApiError(result.warning)
+    } catch (requestError) {
+      setApiError(requestError.message)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   useEffect(() => {
-    localStorage.setItem(storageKey, JSON.stringify(appointments))
-  }, [appointments])
+    let active = true
+    loadAppointments()
+      .then((result) => {
+        if (active) {
+          setAppointments(result.appointments)
+          setApiError(result.warning)
+        }
+      })
+      .catch((requestError) => {
+        if (active) setApiError(requestError.message)
+      })
+      .finally(() => {
+        if (active) setIsLoading(false)
+      })
+    return () => { active = false }
+  }, [])
 
   const visibleAppointments = useMemo(() => appointments
     .filter((appointment) => appointment.date === selectedDate)
@@ -131,7 +221,7 @@ function App() {
     setSelectedDate(formatDate(chosenDate))
   }
 
-  function saveAppointment(event) {
+  async function saveAppointment(event) {
     event.preventDefault()
     const service = services.find((item) => item.name === form.service)
     if (!service) {
@@ -171,24 +261,43 @@ function App() {
       status: 'confirmed',
     }
 
-    setAppointments((current) => editingAppointment
-      ? current.map((appointment) => appointment.id === editingAppointment.id ? { ...updated, id: appointment.id } : appointment)
-      : [...current, { ...updated, id: crypto.randomUUID() }])
-    setSelectedDate(form.date)
-    const chosenDate = new Date(`${form.date}T12:00:00`)
-    setWeekStart(getMonday(chosenDate))
-    closeForm()
+    try {
+      const savedAppointment = await apiRequest(
+        editingAppointment ? `/api/appointments/${editingAppointment.id}` : '/api/appointments',
+        {
+          method: editingAppointment ? 'PUT' : 'POST',
+          body: JSON.stringify(updated),
+        },
+      )
+      setAppointments((current) => editingAppointment
+        ? current.map((appointment) => appointment.id === editingAppointment.id ? savedAppointment : appointment)
+        : [...current, savedAppointment])
+      setSelectedDate(form.date)
+      const chosenDate = new Date(`${form.date}T12:00:00`)
+      setWeekStart(getMonday(chosenDate))
+      closeForm()
+    } catch (requestError) {
+      setError(requestError.message)
+    }
   }
 
-  function cancelAppointment(appointment) {
+  async function cancelAppointment(appointment) {
     if (!window.confirm(`Deseja cancelar o horário de ${appointment.name}?`)) return
-    setAppointments((current) => current.map((item) => item.id === appointment.id ? { ...item, status: 'cancelled' } : item))
+    try {
+      const cancelledAppointment = await apiRequest(`/api/appointments/${appointment.id}/cancel`, { method: 'PATCH' })
+      setAppointments((current) => current.map((item) => item.id === appointment.id ? cancelledAppointment : item))
+      setApiError('')
+    } catch (requestError) {
+      setApiError(requestError.message)
+    }
   }
 
   const selectedIsPast = selectedDate < todayString
 
   return (
-    <main className="app-shell">
+    <>
+      <GlobalStyles />
+      <AppShell>
       <aside className="sidebar">
         <a className="brand" href="#" aria-label="Navalha, início">
           <span className="brand-mark"><Icon name="scissors" size={23} /></span>
@@ -211,6 +320,7 @@ function App() {
         </header>
 
         <div className="page-content">
+          {apiError && <ApiNotice role="alert">{apiError} <button className="text-button" type="button" onClick={refreshAppointments}>Tentar novamente</button></ApiNotice>}
           <div className="page-heading">
             <div>
               <span className="eyebrow">SUA ROTINA, NO RITMO CERTO</span>
@@ -269,7 +379,11 @@ function App() {
               </button>
             </div>
 
-            {visibleAppointments.length > 0 ? (
+            {isLoading ? (
+              <div className="empty-state"><strong>Carregando agendamentos...</strong></div>
+            ) : apiError && appointments.length === 0 ? (
+              <div className="empty-state"><strong>Não foi possível carregar a agenda.</strong></div>
+            ) : visibleAppointments.length > 0 ? (
               <div className="appointment-list">
                 {visibleAppointments.map((appointment) => (
                   <article className={`appointment-card ${appointment.status === 'cancelled' ? 'cancelled-card' : ''}`} key={appointment.id}>
@@ -328,7 +442,8 @@ function App() {
           </section>
         </div>
       )}
-    </main>
+      </AppShell>
+    </>
   )
 }
 
